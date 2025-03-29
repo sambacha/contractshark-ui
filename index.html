@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ethereum Bytecode Debugger</title>
+    <style>
+        :root {
+            --bg-color: #f0f0f0;
+            --panel-bg: #ffffff;
+            --panel-header: #e0e0e0;
+            --border-color: #c0c0c0;
+            --toolbar-bg: #f5f5f5;
+            --highlight-color: #0056b3;
+            --text-color: #333333;
+            --code-color: #000080;
+            --line-number: #717171;
+            --focus-outline: #2563EB;
+            --error-color: #d32f2f;
+            --success-color: #388e3c;
+            --mono-font: 'Consolas', 'Courier New', monospace;
+            
+            /* OPCODE category colors with good contrast ratios */
+            --cat-arithmetic-bg: #e6f7ff;
+            --cat-arithmetic-fg: #0c457d;
+            --cat-storage-bg: #f5f0ff;
+            --cat-storage-fg: #4b1d89;
+            --cat-memory-bg: #fff8e6;
+            --cat-memory-fg: #805215;
+            --cat-control-bg: #f0f7e6;
+            --cat-control-fg: #2c5e10;
+            --cat-stack-bg: #fff0f0;
+            --cat-stack-fg: #8c1616;
+            --cat-system-bg: #f0f0f0;
+            --cat-system-fg: #444444;
+            --cat-logging-bg: #ecf9ec;
+            --cat-logging-fg: #0e6245;
+            --cat-block-bg: #f4f4f9;
+            --cat-block-fg: #383860;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        @font-face {
+            font-family: 'Segoe UI';
+            src: local('Segoe UI');
+            font-display: swap;
+        }
+        
+        @font-face {
+            font-family: 'Consolas';
+            src: local('Consolas');
+            font-display: swap;
+        }
+        
+        html {
+            touch-action: manipulation;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 14px;
+            color: var(--text-color);
+            background-color: var(--bg-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            -webkit-text-size-adjust: 100%;
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        /* Toolbar styles */
+        .toolbar {
+            display: flex;
+            background-color: var(--toolbar-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 4px 8px;
+            height: 32px;
+            align-items: center;
+        }
+        
+        .dropdown {
+            border: 1px solid var(--border-color);
+            background-color: white;
+            height: 24px;
+            padding: 0 4px;
+            margin-right: 8px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .dropdown::after {
+            content: "▼";
+            font-size: 8px;
+            margin-left: 4px;
+        }
+        
+        .search-input {
+            flex: 1;
+            height: 24px;
+            border: 1px solid var(--border-color);
+            padding: 0 8px;
+        }
+        
+        /* Main layout */
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        /* Panel styles */
+        .panel {
+            border: 1px solid var(--border-color);
+            margin: 4px;
+            background-color: var(--panel-bg);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .panel-header {
+            background-color: var(--panel-header);
+            padding: 4px 8px;
+            font-weight: bold;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .panel-content {
+            flex: 1;
+            overflow: auto;
+            -webkit-overflow-scrolling: touch;
+            font-family: var(--mono-font);
+            white-space: pre;
+            padding: 4px;
+        }
+        
+        .panel-controls {
+            display: flex;
+        }
+        
+        .panel-button {
+            margin-left: 4px;
+            cursor: pointer;
+            font-family: var(--mono-font);
+            min-width: 24px;
+            min-height: 24px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        /* Left panel */
+        .left-container {
+            display: flex;
+            flex-direction: column;
+            width: 35%;
+            overflow: hidden;
+        }
+        
+        .stack-panel {
+            flex: 2;
+        }
+        
+        .locals-panel {
+            flex: 1;
+        }
+        
+        /* Right panel */
+        .right-container {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .source-panel {
+            flex: 2;
+        }
+        
+        .executions-panel {
+            height: 120px;
+        }
+        
+        .assembly-panel {
+            flex: 1;
+        }
+        
+        /* Stack trace styling */
+        .stack-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 4px;
+        }
+        
+        .stack-item:hover {
+            background-color: #f0f0f0;
+        }
+        
+        /* Minimize layout shifts */
+        .source-panel, .assembly-panel {
+            contain: layout;
+            min-height: 200px;
+        }
+        
+        .stack-panel {
+            contain: layout;
+            min-height: 150px;
+        }
+        
+        .locals-panel {
+            contain: layout;
+            min-height: 100px;
+        }
+        
+        .stack-fn {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .stack-loc {
+            color: #777;
+            margin-left: 8px;
+        }
+        
+        .stack-arrows {
+            color: #888;
+            margin-left: 8px;
+        }
+        
+        /* Source code styling */
+        .source-line {
+            display: flex;
+            line-height: 1.5;
+        }
+        
+        .line-number {
+            color: var(--line-number);
+            text-align: right;
+            padding-right: 8px;
+            user-select: none;
+            min-width: 30px;
+        }
+        
+        .source-code {
+            white-space: pre;
+        }
+        
+        .comment {
+            color: var(--comment-color);
+        }
+        
+        /* Assembly styling */
+        .asm-line {
+            display: flex;
+            padding: 2px 0;
+        }
+        
+        .asm-instruction {
+            min-width: 200px;
+        }
+        
+        .asm-effect {
+            color: #007acc;
+        }
+        
+        .syscall {
+            color: var(--syscall-color);
+        }
+        
+        /* Executions panel */
+        .executions-header {
+            display: flex;
+            background-color: #f0f0f0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .execution-tab {
+            padding: 4px 8px;
+            cursor: pointer;
+        }
+        
+        .execution-tab.active {
+            background-color: white;
+            border-right: 1px solid var(--border-color);
+        }
+        
+        .execution-content {
+            padding: 8px;
+        }
+        
+        /* Bytecode specific styling */
+        .deterministic { color: #0066cc; }
+        .nondeterministic { color: #cc2200; }
+        .control { color: #007733; }
+        
+        /* Input area */
+        .bytecode-input {
+            width: 100%;
+            height: 80px;
+            font-family: var(--mono-font);
+            border: 1px solid var(--border-color);
+            padding: 8px;
+            margin-bottom: 8px;
+            -webkit-appearance: none;
+            border-radius: 4px;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .decode-button {
+            background-color: var(--highlight-color);
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            cursor: pointer;
+            min-height: 36px;
+            border-radius: 4px;
+            -webkit-appearance: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        
+        .example-button {
+            background-color: #777;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            cursor: pointer;
+            margin-left: 8px;
+            min-height: 36px;
+            border-radius: 4px;
+            -webkit-appearance: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        
+        /* Local variables styling */
+        .local-var {
+            display: flex;
+            padding: 2px 0;
+        }
+        
+        .var-name {
+            margin-right: 8px;
+        }
+        
+        .var-value {
+            color: #555;
+        }
+        
+        /* Highlight for active opcode/line */
+        .active-line {
+            background-color: #e6f0ff;
+        }
+        
+        /* Safari-specific optimizations */
+        @supports (-webkit-touch-callout: none) {
+            .panel-content {
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            .bytecode-input {
+                -webkit-appearance: none;
+                border-radius: 4px;
+            }
+            
+            .decode-button, .example-button {
+                -webkit-appearance: none;
+                border-radius: 4px;
+            }
+            
+            /* Fix for Safari flexbox issues */
+            .main-container, .left-container, .right-container {
+                display: -webkit-box;
+                display: -webkit-flex;
+                display: flex;
+            }
+            
+            .panel {
+                -webkit-box-flex: 1;
+                -webkit-flex: 1;
+                flex: 1;
+                display: -webkit-box;
+                display: -webkit-flex;
+                display: flex;
+                -webkit-box-orient: vertical;
+                -webkit-box-direction: normal;
+                -webkit-flex-direction: column;
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <div class="dropdown">Toolbox ▼</div>
+        <input type="text" class="search-input" placeholder="local var">
+    </div>
+    
+    <div class="main-container">
+        <div class="left-container">
+            <div class="panel stack-panel">
+                <div class="panel-header">
+                    <span>Stack of selected execution (thread 0x000000)</span>
+                    <div class="panel-controls">
+                        <span class="panel-button">◱</span>
+                        <span class="panel-button">✕</span>
+                    </div>
+                </div>
+                <div class="panel-content" id="stack-trace">
+                    <!-- TODO: Stack trace will be populated here -->
+                </div>
+            </div>
+            
+            <div class="panel locals-panel">
+                <div class="panel-header">
+                    <span>Local Variables</span>
+                    <div class="panel-controls">
+                        <span class="panel-button">✕</span>
+                    </div>
+                </div>
+                <div class="panel-content" id="locals-content">
+                    <!-- Local variables will be populated here -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="right-container">
+            <div class="panel source-panel">
+                <div class="panel-header">
+                    <span id="bytecode-header">Ethereum Bytecode</span>
+                    <div class="panel-controls">
+                        <span class="panel-button">◱</span>
+                        <span class="panel-button">✕</span>
+                    </div>
+                </div>
+                <div class="panel-content" id="source-content">
+                    <div style="padding: 8px;">
+                        <textarea id="bytecode-input" class="bytecode-input" placeholder="Enter raw EVM bytecode (e.g., 60806040526004361061001357...)" rows="4"></textarea>
+                        <button id="decode-button" class="decode-button">Decode Bytecode</button>
+                        <button id="example-button" class="example-button">Load Example</button>
+                    </div>
+                    <div id="decoded-output">
+                        <!-- TODO: Decoded bytecode will appear here -->
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel executions-panel">
+                <div class="panel-header">
+                    <span>Executions of</span>
+                    <div class="panel-controls">
+                        <span class="panel-button">◱</span>
+                        <span class="panel-button">✕</span>
+                    </div>
+                </div>
+                <div class="executions-header">
+                    <div class="execution-tab active">main</div>
+                    <div class="execution-tab">No condition</div>
+                    <div class="execution-tab">No print</div>
+                </div>
+                <div class="panel-content" id="executions-content">
+                    <div id="execution-summary">
+                        <!-- TODO: Execution summary will be populated here -->
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel assembly-panel">
+                <div class="panel-header">
+                    <span>Instructions executed by selected thread (thread 0xEVM)</span>
+                    <div class="panel-controls">
+                        <span class="panel-button">◱</span>
+                        <span class="panel-button">✕</span>
+                    </div>
+                </div>
+                <div class="panel-content" id="assembly-content">
+                    <!-- Assembly instructions will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // iOS-specific gesture handling
+        function handleGestures() {
+            // Prevent double-tap to zoom on buttons and clickable elements
+            const interactiveElements = document.querySelectorAll('button, .stack-item, .source-line, .asm-line, .panel-button');
+            interactiveElements.forEach(el => {
+                el.addEventListener('touchend', function(e) {
+                    if (e.changedTouches.length === 1) {
+                        e.preventDefault();
+                        el.click();
+                    }
+                });
+            });
+            
+            // Handle scrolling in panels with improved momentum scrolling
+            const scrollableElements = document.querySelectorAll('.panel-content');
+            scrollableElements.forEach(el => {
+                el.addEventListener('touchstart', function(e) {
+                    // Store initial touch position
+                    el.dataset.touchStartY = e.touches[0].pageY;
+                }, { passive: true });
+            });
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize gesture handling for iOS
+            if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                handleGestures();
+            }
+            // Initialize DOM elements
+            const bytecodeInput = document.getElementById('bytecode-input');
+            const decodeButton = document.getElementById('decode-button');
+            const exampleButton = document.getElementById('example-button');
+            const decodedOutput = document.getElementById('decoded-output');
+            const stackTrace = document.getElementById('stack-trace');
+            const localsContent = document.getElementById('locals-content');
+            const executionSummary = document.getElementById('execution-summary');
+            const assemblyContent = document.getElementById('assembly-content');
+            
+            // Add event listeners
+            if (decodeButton) {
+                decodeButton.addEventListener('click', decodeBytecode);
+            }
+            
+            if (exampleButton) {
+                exampleButton.addEventListener('click', loadExample);
+            }
+            
+            // Define opcodes dictionary
+            const opcodes = {
+                "00": ["STOP", "control", "Halts execution"], 
+                "01": ["ADD", "deterministic", "Addition operation: a + b"], 
+                "02": ["MUL", "deterministic", "Multiplication operation: a * b"],
+                "03": ["SUB", "deterministic", "Subtraction operation: a - b"], 
+                "04": ["DIV", "deterministic", "Integer division: a / b"], 
+                "05": ["SDIV", "deterministic", "Signed integer division"],
+                "06": ["MOD", "deterministic", "Modulo operation: a % b"], 
+                "07": ["SMOD", "deterministic", "Signed modulo operation"], 
+                "08": ["ADDMOD", "deterministic", "Modular addition: (a + b) % N"],
+                "09": ["MULMOD", "deterministic", "Modular multiplication: (a * b) % N"], 
+                "0a": ["EXP", "deterministic", "Exponential operation: a ^ b"], 
+                "0b": ["SIGNEXTEND", "deterministic", "Sign extension"],
+                "10": ["LT", "deterministic", "Less-than comparison: a < b"], 
+                "11": ["GT", "deterministic", "Greater-than comparison: a > b"], 
+                "12": ["SLT", "deterministic", "Signed less-than comparison"],
+                "13": ["SGT", "deterministic", "Signed greater-than comparison"], 
+                "14": ["EQ", "deterministic", "Equality comparison: a == b"], 
+                "15": ["ISZERO", "deterministic", "Is zero: a == 0"],
+                "16": ["AND", "deterministic", "Bitwise AND operation"], 
+                "17": ["OR", "deterministic", "Bitwise OR operation"], 
+                "18": ["XOR", "deterministic", "Bitwise XOR operation"],
+                "19": ["NOT", "deterministic", "Bitwise NOT operation"], 
+                "1a": ["BYTE", "deterministic", "Extract a byte from number"], 
+                "1b": ["SHL", "deterministic", "Shift left operation"],
+                "1c": ["SHR", "deterministic", "Shift right operation"], 
+                "1d": ["SAR", "deterministic", "Signed shift right operation"],
+                "20": ["SHA3", "deterministic", "Compute Keccak-256 hash"],
+                "30": ["ADDRESS", "deterministic", "Get address of current execution"], 
+                "31": ["BALANCE", "nondeterministic", "Get balance of address"], 
+                "32": ["ORIGIN", "deterministic", "Get transaction origin address"],
+                "33": ["CALLER", "deterministic", "Get caller address"], 
+                "34": ["CALLVALUE", "deterministic", "Get deposited value in wei"], 
+                "35": ["CALLDATALOAD", "deterministic", "Load call data"],
+                "36": ["CALLDATASIZE", "deterministic", "Get size of call data"], 
+                "37": ["CALLDATACOPY", "deterministic", "Copy call data"], 
+                "38": ["CODESIZE", "deterministic", "Get code size"],
+                "39": ["CODECOPY", "deterministic", "Copy code"], 
+                "3a": ["GASPRICE", "nondeterministic", "Get gas price"], 
+                "3b": ["EXTCODESIZE", "nondeterministic", "Get size of an account's code"],
+                "3c": ["EXTCODECOPY", "nondeterministic", "Copy an account's code"], 
+                "3d": ["RETURNDATASIZE", "deterministic", "Get size of return data"], 
+                "3e": ["RETURNDATACOPY", "deterministic", "Copy return data"],
+                "3f": ["EXTCODEHASH", "nondeterministic", "Get hash of an account's code"],
+                "40": ["BLOCKHASH", "nondeterministic", "Get hash of a recent block"], 
+                "41": ["COINBASE", "nondeterministic", "Get the block's beneficiary address"], 
+                "42": ["TIMESTAMP", "nondeterministic", "Get block timestamp"],
+                "43": ["NUMBER", "nondeterministic", "Get block number"], 
+                "44": ["DIFFICULTY", "nondeterministic", "Get block difficulty"], 
+                "45": ["GASLIMIT", "nondeterministic", "Get block gas limit"],
+                "46": ["CHAINID", "deterministic", "Get chain ID"], 
+                "47": ["SELFBALANCE", "nondeterministic", "Get balance of currently executing account"], 
+                "48": ["BASEFEE", "nondeterministic", "Get block's base fee"],
+                "50": ["POP", "deterministic", "Remove item from stack"], 
+                "51": ["MLOAD", "deterministic", "Load word from memory"], 
+                "52": ["MSTORE", "deterministic", "Save word to memory"],
+                "53": ["MSTORE8", "deterministic", "Save byte to memory"], 
+                "54": ["SLOAD", "nondeterministic", "Load word from storage"], 
+                "55": ["SSTORE", "nondeterministic", "Save word to storage"],
+                "56": ["JUMP", "control", "Unconditional jump"], 
+                "57": ["JUMPI", "control", "Conditional jump"], 
+                "58": ["PC", "deterministic", "Get program counter"],
+                "59": ["MSIZE", "deterministic", "Get memory size"], 
+                "5a": ["GAS", "nondeterministic", "Get available gas"], 
+                "5b": ["JUMPDEST", "control", "Mark valid jump destination"],
+                "80": ["DUP1", "deterministic", "Duplicate 1st stack item"], 
+                "81": ["DUP2", "deterministic", "Duplicate 2nd stack item"], 
+                "82": ["DUP3", "deterministic", "Duplicate 3rd stack item"],
+                "83": ["DUP4", "deterministic", "Duplicate 4th stack item"], 
+                "84": ["DUP5", "deterministic", "Duplicate 5th stack item"], 
+                "85": ["DUP6", "deterministic", "Duplicate 6th stack item"],
+                "86": ["DUP7", "deterministic", "Duplicate 7th stack item"], 
+                "87": ["DUP8", "deterministic", "Duplicate 8th stack item"], 
+                "88": ["DUP9", "deterministic", "Duplicate 9th stack item"],
+                "89": ["DUP10", "deterministic", "Duplicate 10th stack item"], 
+                "8a": ["DUP11", "deterministic", "Duplicate 11th stack item"], 
+                "8b": ["DUP12", "deterministic", "Duplicate 12th stack item"],
+                "8c": ["DUP13", "deterministic", "Duplicate 13th stack item"], 
+                "8d": ["DUP14", "deterministic", "Duplicate 14th stack item"], 
+                "8e": ["DUP15", "deterministic", "Duplicate 15th stack item"],
+                "8f": ["DUP16", "deterministic", "Duplicate 16th stack item"],
+                "90": ["SWAP1", "deterministic", "Exchange 1st and 2nd stack items"], 
+                "91": ["SWAP2", "deterministic", "Exchange 1st and 3rd stack items"], 
+                "92": ["SWAP3", "deterministic", "Exchange 1st and 4th stack items"],
+                "93": ["SWAP4", "deterministic", "Exchange 1st and 5th stack items"], 
+                "94": ["SWAP5", "deterministic", "Exchange 1st and 6th stack items"], 
+                "95": ["SWAP6", "deterministic", "Exchange 1st and 7th stack items"],
+                "96": ["SWAP7", "deterministic", "Exchange 1st and 8th stack items"], 
+                "97": ["SWAP8", "deterministic", "Exchange 1st and 9th stack items"], 
+                "98": ["SWAP9", "deterministic", "Exchange 1st and 10th stack items"],
+                "99": ["SWAP10", "deterministic", "Exchange 1st and 11th stack items"], 
+                "9a": ["SWAP11", "deterministic", "Exchange 1st and 12th stack items"], 
+                "9b": ["SWAP12", "deterministic", "Exchange 1st and 13th stack items"],
+                "9c": ["SWAP13", "deterministic", "Exchange 1st and 14th stack items"], 
+                "9d": ["SWAP14", "deterministic", "Exchange 1st and 15th stack items"], 
+                "9e": ["SWAP15", "deterministic", "Exchange 1st and 16th stack items"],
+                "9f": ["SWAP16", "deterministic", "Exchange 1st and 17th stack items"],
+                "a0": ["LOG0", "nondeterministic", "Append log record (no topics)"], 
+                "a1": ["LOG1", "nondeterministic", "Append log record (1 topic)"], 
+                "a2": ["LOG2", "nondeterministic", "Append log record (2 topics)"],
+                "a3": ["LOG3", "nondeterministic", "Append log record (3 topics)"], 
+                "a4": ["LOG4", "nondeterministic", "Append log record (4 topics)"],
+                "f0": ["CREATE", "nondeterministic", "Create a new account with code"], 
+                "f1": ["CALL", "nondeterministic", "Call a method in another contract"], 
+                "f2": ["CALLCODE", "nondeterministic", "Call a method in another contract (using current contract's code)"],
+                "f3": ["RETURN", "control", "Return from function call with data"], 
+                "f4": ["DELEGATECALL", "nondeterministic", "Call a method in another contract (using current context)"], 
+                "f5": ["CREATE2", "nondeterministic", "Create a new account with code at a predictable address"],
+                "fa": ["STATICCALL", "nondeterministic", "Call a method in another contract (as static call)"], 
+                "fd": ["REVERT", "control", "Revert operation with error message"], 
+                "fe": ["INVALID", "control", "Invalid operation"], 
+                "ff": ["SELFDESTRUCT", "nondeterministic", "Destroy the current contract and send funds"]
+            };
+            
+            // Stack effect descriptions for common operations
+            const stackEffects = {
+                "ADD": "Pops two values and pushes their sum",
+                "MUL": "Pops two values and pushes their product",
+                "SUB": "Pops two values a, b and pushes (a - b)",
+                "DIV": "Pops two values a, b and pushes (a / b)",
+                "PUSH1": "Pushes the next byte onto the stack",
+                "PUSH2": "Pushes the next 2 bytes onto the stack",
+                "DUP1": "Duplicates the top stack item",
+                "SWAP1": "Swaps the top two stack items",
+                "MSTORE": "Pops address and value, stores value at memory[address]",
+                "RETURN": "Pops offset and length, ends execution returning memory[offset:offset+length]"
+            };
+            
+            // decode bytecode
+            function decodeBytecode() {
+                // Clean the input - remove spaces, 0x prefix, and non-hex characters, emojis, inidian and russian shit etc.
+                let rawInput = bytecodeInput.value || "";
+                let bytecode = rawInput.trim().replace(/^0x/, '').replace(/[^0-9a-fA-F]/g, '');
+                
+                // Update the input field with cleaned bytecode if necessary
+                if (bytecode !== rawInput) {
+                    bytecodeInput.value = bytecode;
+                }
+                
+                if (!bytecode) {
+                    decodedOutput.innerHTML = "<div style='padding: 8px; color: #888;'>// Please enter some bytecode to decode</div>";
+                    clearDisplays();
+                    return;
+                }
+                
+                // Ensure bytecode has even length (each byte is 2 hex chars)
+                if (bytecode.length % 2 !== 0) {
+                    bytecode = '0' + bytecode;
+                    bytecodeInput.value = bytecode;
+                }
+                
+                try {
+                    const result = decodeOpcodes(bytecode);
+                    displayResults(bytecode, result);
+                } catch (error) {
+                    console.error("Error decoding bytecode:", error);
+                    decodedOutput.innerHTML = `<div style='padding: 8px; color: #c00;'>// Error decoding bytecode: ${error.message}</div>`;
+                    clearDisplays();
+                }
+            }
+            
+            //  load an example bytecode
+            function loadExample() {
+                // Simple ERC20 transfer function bytecode, I think
+                bytecodeInput.value = '608060405234801561001057600080fd5b506004361061003b5760003560e01c80635c60da1b14610040578063f851a44014610061575b600080fd5b61004a610082565b6040516100579190610127565b60405180910390f35b6100686100a6565b60405161007591906101b3565b60405180910390f35b60006100906100ca565b600101546000015473ffffffffffffffffffffffffffffffffffffffff16905090565b60006100b46100ca565b600001546000015473ffffffffffffffffffffffffffffffffffffffff16905090565b600060405160408082526004908201526300000001602182015291505090565b6000819050919050565b610121816100ee565b82525050565b600060208201905061013c6000830184610118565b92915050565b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b600061016d82610142565b9050919050565b61017d81610162565b82525050565b60008115159050919050565b61019881610183565b82525050565b60006020820190506101b36000830184610174565b9291505056fe';
+                decodeBytecode();
+            }
+            
+            // decode opcodes from bytecode
+            function decodeOpcodes(bytecode) {
+                let i = 0;
+                let offset = 0;
+                let formattedOutput = "";
+                let totalOpcodes = 0;
+                let deterministic = 0;
+                let nondeterministic = 0;
+                let control = 0;
+                let stack = [];
+                let memory = {};
+                let storage = {};
+                let jumpDestinations = [];
+                let instructions = [];
+                
+                while (i < bytecode.length) {
+                    let opcode = bytecode.substring(i, i + 2).toLowerCase();
+                    let currentOffset = offset;
+                    let hexValue = opcode;
+                    let mnemonic, category, description;
+                    
+                    // Format offset as hexadecimal with padding
+                    let offsetHex = "0x" + currentOffset.toString(16).padStart(4, '0');
+                    
+                    i += 2;
+                    offset += 1; // Increment offset by 1 byte (opcode)
+                    totalOpcodes++;
+                    
+                    if (opcode === "5b") { // JUMPDEST
+                        jumpDestinations.push(currentOffset);
+                    }
+                    
+                    if (opcode >= "60" && opcode <= "7f") {
+                        let n = parseInt(opcode, 16) - 0x60 + 1;
+                        let pushData = bytecode.substring(i, i + 2 * n);
+                        hexValue += pushData;
+                        i += 2 * n;
+                        offset += n; // Add pushed data size to offset
+                        
+                        [mnemonic, category, description] = [`PUSH${n}`, "deterministic", `Pushes 0x${pushData} onto the stack`];
+                        deterministic++;
+                        
+                        // Simulate stack push
+                        let pushValue = "0x" + pushData;
+                        stack.unshift(pushValue);
+                        
+                        formattedOutput += `<div class="source-line" data-offset="${offsetHex}" data-opcode="PUSH${n}" data-hex="${hexValue}">
+                                              <span class="line-number">${currentOffset}</span>
+                                              <span class="source-code ${category}">PUSH${n} 0x${pushData}</span>
+                                           </div>`;
+                    } else {
+                        [mnemonic, category, description] = opcodes[opcode] || [`UNKNOWN(${opcode})`, "control", "Unknown operation"];
+                        
+                        if (category === "deterministic") deterministic++;
+                        else if (category === "nondeterministic") nondeterministic++;
+                        else if (category === "control") control++;
+                        
+                        // Simulate stack operations
+                        simulateStackEffect(mnemonic, stack, memory, storage);
+                        
+                        formattedOutput += `<div class="source-line" data-offset="${offsetHex}" data-opcode="${mnemonic}" data-hex="${hexValue}">
+                                              <span class="line-number">${currentOffset}</span>
+                                              <span class="source-code ${category}">${mnemonic}</span>
+                                           </div>`;
+                    }
+                    
+                    // Record instruction for assembly view
+                    instructions.push({
+                        offset: offsetHex,
+                        opcode: mnemonic,
+                        hex: hexValue,
+                        description: stackEffects[mnemonic] || description,
+                        category: category
+                    });
+                }
+                
+                return {
+                    formattedOutput,
+                    totalOpcodes,
+                    deterministic,
+                    nondeterministic,
+                    control,
+                    stack,
+                    memory,
+                    storage,
+                    jumpDestinations,
+                    instructions
+                };
+            }
+            
+            // Simulate stack effects for better debugging visualization
+            function simulateStackEffect(opcode, stack, memory, storage) {
+                // Basic simulation of common operations
+                switch(opcode) {
+                    case "POP":
+                        if (stack.length > 0) stack.shift();
+                        break;
+                    case "DUP1":
+                        if (stack.length > 0) stack.unshift(stack[0]);
+                        break;
+                    case "SWAP1":
+                        if (stack.length > 1) [stack[0], stack[1]] = [stack[1], stack[0]];
+                        break;
+                    case "ADD":
+                        if (stack.length > 1) {
+                            const a = BigInt(stack.shift() || 0);
+                            const b = BigInt(stack.shift() || 0);
+                            stack.unshift("0x" + (a + b).toString(16));
+                        }
+                        break;
+                    // Additional operations could be simulated here
+                }
+            }
+            
+            // Function to display results across all panels
+            function displayResults(bytecode, result) {
+                displayDecodedOutput(result.formattedOutput);
+                displayStackTrace(result.instructions);
+                displayLocals(result.totalOpcodes, bytecode.length / 2, result.jumpDestinations.length);
+                displayExecutionSummary(bytecode);
+                displayAssembly(result.instructions);
+                
+                // Make source lines clickable with touch optimization
+                const sourceLines = document.querySelectorAll('.source-line');
+                sourceLines.forEach(line => {
+                    // Add click event for mouse interactions
+                    line.addEventListener('click', function() {
+                        activateLine(this);
+                    });
+                    
+                    // Add touch event for mobile devices
+                    line.addEventListener('touchend', function(e) {
+                        if (e.changedTouches.length === 1) {
+                            e.preventDefault();
+                            activateLine(this);
+                        }
+                    });
+                });
+                
+                function activateLine(line) {
+                    // Remove highlight from all lines
+                    sourceLines.forEach(l => l.classList.remove('active-line'));
+                    // Add highlight to clicked/touched line
+                    line.classList.add('active-line');
+                    
+                    // Update assembly view to highlight corresponding instruction
+                    highlightAssemblyLine(line.dataset.offset);
+                }
+            }
+            
+            // Display decoded bytecode in the source panel
+            function displayDecodedOutput(formattedOutput) {
+                decodedOutput.innerHTML = formattedOutput;
+            }
+            
+            // Display stack trace in the left panel
+            function displayStackTrace(instructions) {
+                let html = '';
+                
+                // Show more complex functions in stack
+                html += '<div class="stack-item">';
+                html += '  <span class="stack-fn">_evm_execute_bytecode ( ... )</span>';
+                html += '  <span class="stack-loc">at evm-runtime.c:142</span>';
+                html += '  <span class="stack-arrows">├─ ⟼</span>';
+                html += '</div>';
+                
+                html += '<div class="stack-item">';
+                html += '  <span class="stack-fn">_evm_process_instructions ( ... )</span>';
+                html += '  <span class="stack-loc">at evm-op.c:92</span>';
+                html += '  <span class="stack-arrows">├─ ⟼</span>';
+                html += '</div>';
+                
+                html += '<div class="stack-item">';
+                html += '  <span class="stack-fn">_evm_handle_opcode ( ... )</span>';
+                html += '  <span class="stack-loc">at evm-instr.c:75</span>';
+                html += '  <span class="stack-arrows">├─ ⟼</span>';
+                html += '</div>';
+                
+                // Add actual instructions from our bytecode
+                instructions.slice(0, 8).forEach(instr => {
+                    html += `<div class="stack-item">`;
+                    html += `  <span class="stack-fn">${instr.opcode} ( ... )</span>`;
+                    html += `  <span class="stack-loc">at ${instr.offset}</span>`;
+                    html += '  <span class="stack-arrows">├─ ⟼</span>';
+                    html += '</div>';
+                });
+                
+                if (instructions.length > 8) {
+                    html += '<div class="stack-item">';
+                    html += '  <span class="stack-fn">... more instructions ...</span>';
+                    html += '</div>';
+                }
+                
+                stackTrace.innerHTML = html;
+            }
+            
+            // Display local variables
+            function displayLocals(totalOpcodes, byteSize, jumpDests) {
+                let html = '';
+                
+                html += '<div class="local-var">';
+                html += '  <span class="var-name">bytecode_size<sub>int</sub>=</span>';
+                html += `  <span class="var-value">${byteSize}</span>`;
+                html += '</div>';
+                
+                html += '<div class="local-var">';
+                html += '  <span class="var-name">opcode_count<sub>int</sub>=</span>';
+                html += `  <span class="var-value">${totalOpcodes}</span>`;
+                html += '</div>';
+                
+                html += '<div class="local-var">';
+                html += '  <span class="var-name">gas_used<sub>int</sub>=</span>';
+                html += `  <span class="var-value">${Math.round(byteSize * 5.5)}</span>`;
+                html += '</div>';
+                
+                html += '<div class="local-var">';
+                html += '  <span class="var-name">jump_destinations<sub>int</sub>=</span>';
+                html += `  <span class="var-value">${jumpDests}</span>`;
+                html += '</div>';
+                
+                localsContent.innerHTML = html;
+            }
+            
+            // Display execution summary
+            function displayExecutionSummary(bytecode) {
+                const hash = bytecode.slice(0, 10) + '...';
+                const size = bytecode.length / 2;
+                
+                executionSummary.innerHTML = `<div style="font-family: var(--mono-font); display: flex; align-items: center;">
+                    <span>main (bytecode=0x${hash} ▼ ) = 0;</span>
+                </div>`;
+            }
+            
+            // Display assembly instructions
+            function displayAssembly(instructions) {
+                let html = '';
+                
+                instructions.forEach(instr => {
+                    html += `<div class="asm-line" data-offset="${instr.offset}">`;
+                    html += `  <span class="asm-instruction">${instr.opcode} ${instr.opcode.startsWith('PUSH') ? instr.hex.substring(2) : ''}</span>`;
+                    html += `  <span class="asm-effect">→ ${instr.description}</span>`;
+                    html += '</div>';
+                });
+                
+                assemblyContent.innerHTML = html;
+            }
+            
+            // Highlight assembly line corresponding to a bytecode offset
+            function highlightAssemblyLine(offset) {
+                const asmLines = document.querySelectorAll('.asm-line');
+                asmLines.forEach(line => {
+                    line.classList.remove('active-line');
+                    if (line.dataset.offset === offset) {
+                        line.classList.add('active-line');
+                        line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                });
+            }
+            
+            // wipe all displays
+            function clearDisplays() {
+                stackTrace.innerHTML = '';
+                localsContent.innerHTML = '';
+                executionSummary.innerHTML = '';
+                assemblyContent.innerHTML = '';
+            }
+            
+            // Initialize with a helpful message keke
+            decodedOutput.innerHTML = "<div style='padding: 8px; color: #888;'>// Enter bytecode and click 'Decode Bytecode' or 'Load Example'</div>";
+        });
+    </script>
+</body>
+</html>
